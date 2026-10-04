@@ -10,6 +10,17 @@ export class AxyHermesAgentExecutor extends HermesAgentExecutor {
     this.correctionBridge = new HermesBridge({ command: this.command, board: this.board, pollMs: this.pollMs, maxPolls: this.maxPolls });
   }
 
+  body(workPackage, context, resume) {
+    return [
+      super.body(workPackage, context, resume),
+      "",
+      "AXYVERO project quality baseline:",
+      "- If package.json exists, run npm ci, npm run lint, npm run build, and npm audit --omit=dev --audit-level=high before committing.",
+      "- Do not suppress, bypass, or ignore failing checks.",
+      "- Keep the workspace clean after the commit.",
+    ].join("\n");
+  }
+
   async correct(workPackage, { workspace, findings, round = 1 }) {
     const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace.path, encoding: "utf8" }).trim();
     const findingLines = (findings ?? []).map((finding) => `- ${finding.id ?? "finding"}: ${finding.summary ?? finding}`).join("\n");
@@ -23,7 +34,8 @@ export class AxyHermesAgentExecutor extends HermesAgentExecutor {
       findingLines || "- No structured findings were supplied.",
       "",
       "Fix only the findings and preserve all already-satisfied acceptance criteria.",
-      "Run the relevant repository checks before committing.",
+      "If package.json exists, run npm ci, npm run lint, npm run build, and npm audit --omit=dev --audit-level=high before committing.",
+      "Do not suppress, bypass, or ignore failing checks.",
       "Do not push. Do not merge. Do not reset, clean, or discard existing work.",
       "Create one real Git commit on the existing branch.",
       "The correction commit MUST contain these exact trailers:",
