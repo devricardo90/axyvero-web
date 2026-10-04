@@ -33,6 +33,15 @@ function git(args, cwd, options = {}) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"], input: options.input }).trim();
 }
 
+function syncLocalMain() {
+  const repo = config.repository.repoPath;
+  const current = git(["branch", "--show-current"], repo);
+  if (current !== config.repository.baseRef) throw new Error(`expected ${repo} on ${config.repository.baseRef}, found ${current}`);
+  if (git(["status", "--porcelain=v1", "-uall"], repo) !== "") throw new Error(`cannot sync ${config.repository.baseRef}: main checkout is dirty`);
+  git(["fetch", "origin", config.repository.baseRef], repo);
+  git(["merge", "--ff-only", `origin/${config.repository.baseRef}`], repo);
+}
+
 function makeWorkPackage(task) {
   const digest = task.acceptanceCriteriaDigest;
   const short = digest.slice(0, 12);
@@ -153,7 +162,7 @@ async function driveTask(task) {
     ownerId: `axyvero-${process.pid}`,
     agentExecutor: agent,
     executionRunner,
-    runtimeOptions: { timeoutMs: 20 * 60 * 1000, leaseTtlMs: 21 * 60 * 1000 },
+    runtimeOptions: { timeoutMs: 62 * 60 * 1000, leaseTtlMs: 65 * 60 * 1000 },
   });
 
   for (let cycle = 1; cycle <= config.timings.maxRuntimeCyclesPerTask; cycle += 1) {
@@ -179,6 +188,7 @@ try {
   log({ event: "controller_start", projectKey: config.projectKey, repository: config.repository.identity });
   await hermesBridge.waitForExistingAxyWork();
   for (;;) {
+    syncLocalMain();
     const tasks = jiraRead.listTasks();
     const selection = jiraRead.resolveNextTask();
     if (selection.reason !== "ELIGIBLE_TASK_FOUND") {
