@@ -26,6 +26,11 @@ function taskStatus(payload) {
   return typeof value === "string" ? value.toLowerCase() : null;
 }
 
+function listRow(line) {
+  const match = String(line).match(/^[^A-Za-z0-9]*\s*(t_[A-Za-z0-9]+)\s+(triage|todo|scheduled|ready|running|review|blocked|done)\s+/i);
+  return match ? { id: match[1], status: match[2].toLowerCase(), line: String(line).trim() } : null;
+}
+
 export class HermesBridge {
   constructor({ command = "hermes", board = "workflow-prod", pollMs = 2000, maxPolls = 1800 } = {}) {
     Object.assign(this, { command, board, pollMs, maxPolls });
@@ -88,10 +93,10 @@ export class HermesBridge {
   async waitForExistingAxyWork() {
     for (;;) {
       const result = await this.invoke(["kanban", "--board", this.board, "list"], "list");
-      const lines = String(result.stdout ?? result).split("\n");
-      const active = lines.filter((line) => /\b(?:ready|running|review|scheduled|todo)\b/i.test(line) && /\bAXY-\d+\b/i.test(line));
+      const rows = String(result.stdout ?? result).split("\n").map(listRow).filter(Boolean);
+      const active = rows.filter((row) => NON_TERMINAL.has(row.status) && /\bAXY-\d+\b/i.test(row.line));
       if (active.length === 0) return;
-      process.stdout.write(`${JSON.stringify({ event: "waiting_existing_hermes", active: active.map((line) => line.trim()) })}\n`);
+      process.stdout.write(`${JSON.stringify({ event: "waiting_existing_hermes", active: active.map((row) => row.line) })}\n`);
       await new Promise((resolve) => setTimeout(resolve, this.pollMs));
     }
   }
