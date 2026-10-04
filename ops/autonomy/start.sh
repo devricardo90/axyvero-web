@@ -21,7 +21,7 @@ if [ -f "$PIDFILE" ]; then
   rm -f "$PIDFILE"
 fi
 
-git -C "$REPO" fetch origin "$BRANCH"
+git -C "$REPO" fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
 
 if [ -d "$RUNNER_DIR" ]; then
   git -C "$REPO" worktree remove --force "$RUNNER_DIR" 2>/dev/null || true
