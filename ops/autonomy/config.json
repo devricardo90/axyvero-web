@@ -22,7 +22,7 @@
     "maxCorrections": 3
   },
   "hermes": {
-    "command": "hermes",
+    "command": "/opt/hermes/bin/hermes",
     "board": "workflow-prod",
     "coderAssignee": "coder",
     "reviewerAssignee": "reviewer",
