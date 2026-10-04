@@ -1,0 +1,37 @@
+{
+  "projectKey": "AXY",
+  "jira": {
+    "site": "ricardodesouzafrancisco.atlassian.net",
+    "todoStatus": "A fazer",
+    "doingStatus": "Fazendo",
+    "doneStatus": "Feito",
+    "doingTransition": "Fazendo",
+    "doneTransition": "Feito"
+  },
+  "repository": {
+    "identity": "devricardo90/axyvero-web",
+    "owner": "devricardo90",
+    "repo": "axyvero-web",
+    "baseRef": "main",
+    "repoPath": "/projects/axyvero-web",
+    "workspacesDir": "/projects/axyvero-worktrees"
+  },
+  "github": {
+    "baseBranch": "main",
+    "workflowIdentity": ".github/workflows/validate.yml",
+    "maxCorrections": 3
+  },
+  "hermes": {
+    "command": "hermes",
+    "board": "workflow-prod",
+    "coderAssignee": "coder",
+    "reviewerAssignee": "reviewer",
+    "pollMs": 2000,
+    "maxPolls": 1800
+  },
+  "stateDir": "/opt/data/axyvero",
+  "timings": {
+    "cycleWaitMs": 5000,
+    "maxRuntimeCyclesPerTask": 500
+  }
+}
