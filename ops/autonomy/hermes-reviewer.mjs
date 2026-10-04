@@ -16,7 +16,9 @@ function findingsFrom(metadata, summary) {
 }
 
 function verdictFrom(payload) {
-  const run = Array.isArray(payload?.runs) ? payload.runs.at(-1) : null;
+  const runs = Array.isArray(payload?.runs) ? [...payload.runs] : [];
+  runs.sort((a, b) => Number(a?.id ?? 0) - Number(b?.id ?? 0));
+  const run = runs.at(-1) ?? null;
   const metadata = run?.metadata ?? {};
   const summary = run?.summary ?? payload?.latest_summary ?? payload?.task?.result ?? "";
   const verdict = String(metadata?.verdict ?? (/VERDICT:\s*(CLEAN|FINDINGS|UNAVAILABLE)/i.exec(summary)?.[1] ?? "")).toUpperCase();
@@ -42,7 +44,13 @@ export class HermesIndependentReviewer {
       "",
       "Judge only whether the specification is internally coherent, testable, scoped, and safe to implement autonomously.",
       "Do not modify files, create commits, push, or merge.",
-      "Return exactly one verdict: CLEAN, FINDINGS, or UNAVAILABLE.",
+      "",
+      "Return exactly one of these formats:",
+      "VERDICT: CLEAN",
+      "or",
+      "VERDICT: FINDINGS",
+      "FINDINGS:",
+      "- <concrete finding>",
     ].join("\n");
     try {
       const id = await this.bridge.createTask({
@@ -80,7 +88,18 @@ export class HermesIndependentReviewer {
       "Verify HEAD is exactly the target SHA and the working tree is clean before and after review.",
       "Run npm ci, npm run lint, npm run build, npm audit --omit=dev --audit-level=high when package.json is present.",
       "Review correctness, security, maintainability, scope, and every acceptance criterion.",
-      "Return VERDICT: CLEAN or VERDICT: FINDINGS and concrete findings.",
+      "",
+      "Return exactly:",
+      "VERDICT: CLEAN",
+      `TARGET_SHA: ${head}`,
+      "TESTS: <summary>",
+      "",
+      "or:",
+      "",
+      "VERDICT: FINDINGS",
+      `TARGET_SHA: ${head}`,
+      "FINDINGS:",
+      "- <concrete finding>",
     ].join("\n");
     try {
       const id = await this.bridge.createTask({
