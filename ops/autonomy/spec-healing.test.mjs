@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { criteriaDigest, healSpecification, parseRepairOutput, replaceAcceptanceCriteria, SpecRepairExhaustedError } from "./spec-healing.mjs";
+import { criteriaDigest, healSpecification, parseRepairOutput, replaceAcceptanceCriteria, SpecNeedsOwnerError, SpecRepairExhaustedError } from "./spec-healing.mjs";
 
 const criteria = [{ id: "AC-01", description: "Run npm test and require exit code 0." }];
 const task = { id: "AXY-1", title: "Demo", acceptanceCriteria: criteria, acceptanceCriteriaDigest: criteriaDigest(criteria) };
@@ -54,4 +54,14 @@ test("checkpoint evidence survives and transient reviewer failure retries", asyn
   assert.equal(out.attempts.length, 1);
   assert.ok(checkpoints.some((item) => item.kind === "review"));
   assert.equal(failures, 1);
+});
+
+test("needs owner retains checkpoint evidence", async () => {
+  const h = harness([{ verdict: "FINDINGS", findings: [{ id: "R-1", summary: "scope choice" }] }], ["NEEDS_OWNER Choose one of two product scopes."]);
+  await assert.rejects(healSpecification({ task, ...h, checkpoint: async () => {} }), (error) => error instanceof SpecNeedsOwnerError && error.evidence.findings.length === 1);
+});
+
+test("max repair exhaustion retains all findings", async () => {
+  const h = harness([{ verdict: "FINDINGS", findings: [{ id: "R-1", summary: "one" }] }, { verdict: "FINDINGS", findings: [{ id: "R-2", summary: "two" }] }], ["REPAIRED\n- AC-01: Run npm test and report output."]);
+  await assert.rejects(healSpecification({ task, ...h, maxSpecRepairs: 1 }), (error) => error instanceof SpecRepairExhaustedError && error.evidence.attempts.length === 1);
 });
