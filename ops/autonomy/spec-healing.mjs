@@ -43,7 +43,7 @@ export async function healSpecification({ task, readIssue, writeIssue, reviewer,
   for (let attempt = 0; attempt <= maxSpecRepairs; attempt += 1) {
     const currentTask = current.task ?? current;
     const oldDigest = currentTask.acceptanceCriteriaDigest ?? criteriaDigest(currentTask.acceptanceCriteria);
-    const workPackage = { taskId: currentTask.id, title: currentTask.title, executionId: `spec-${currentTask.id}`, acceptanceCriteria: currentTask.acceptanceCriteria.map(({ id, description }) => ({ id, text: description })) };
+    const workPackage = { taskId: currentTask.id, title: currentTask.title, executionId: `spec-${currentTask.id}-${oldDigest}`, acceptanceCriteria: currentTask.acceptanceCriteria.map(({ id, description }) => ({ id, text: description })) };
     const review = await retry(async () => {
       const result = await reviewer.reviewSpec(workPackage);
       if (result.verdict === "UNAVAILABLE") throw Object.assign(new Error("spec reviewer unavailable"), { code: "REVIEW_UNAVAILABLE", classification: "TRANSIENT", retryable: true });
