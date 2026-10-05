@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -181,6 +181,26 @@ async function pauseForOwner(task, error) {
   log({ event: "owner_paused", taskId: task.id, decisionTaskId: id, stage: "SPEC_REPAIR" });
 }
 
+function ownerDecisionFrom(payload) {
+  const comments = payload?.task?.comments ?? payload?.comments ?? payload?.task?.comment?.comments ?? [];
+  return comments.map((comment) => comment?.body ?? comment?.text ?? comment?.content ?? "").filter(Boolean).reverse().find((text) => !String(text).includes("Owner decision required")) ?? null;
+}
+
+async function resumePausedOwner() {
+  const path = join(stateDir, "owner-paused.json");
+  if (!existsSync(path)) return null;
+  const paused = JSON.parse(readFileSync(path, "utf8"));
+  const payload = await hermesBridge.show(paused.decisionTaskId);
+  const status = String(payload?.task?.status ?? payload?.status ?? "").toLowerCase();
+  if (status === "blocked") return "PAUSED";
+  const decision = ownerDecisionFrom(payload);
+  if (!decision) { log({ event: "owner_decision_waiting", decisionTaskId: paused.decisionTaskId }); return "PAUSED"; }
+  writeFileSync(join(stateDir, "executions", `${paused.taskId}-owner-decision.json`), JSON.stringify({ ...paused, decision, resumedAt: new Date().toISOString() }, null, 2));
+  unlinkSync(path);
+  log({ event: "owner_resumed", taskId: paused.taskId, decisionTaskId: paused.decisionTaskId });
+  return { task: readJiraTask(paused.taskId), decision };
+}
+
 async function driveTask(task) {
   try {
     const healed = await healSpecification({
@@ -245,15 +265,17 @@ try {
   log({ event: "controller_start", projectKey: config.projectKey, repository: config.repository.identity });
   await hermesBridge.waitForExistingAxyWork();
   for (;;) {
+    const resumed = await resumePausedOwner();
+    if (resumed === "PAUSED") break;
     syncLocalMain();
     const tasks = jiraRead.listTasks();
-    const selection = jiraRead.resolveNextTask();
+    const selection = resumed?.task ? { reason: "ELIGIBLE_TASK_FOUND", taskId: resumed.task.task.id } : jiraRead.resolveNextTask();
     if (selection.reason !== "ELIGIBLE_TASK_FOUND") {
       const allDone = tasks.length > 0 && tasks.every((task) => task.completed);
       log({ event: allDone ? "project_complete" : "idle", reason: selection.reason, tasks: tasks.length });
       break;
     }
-    const task = tasks.find((candidate) => candidate.id === selection.taskId);
+    const task = resumed?.task?.task ?? tasks.find((candidate) => candidate.id === selection.taskId);
     if (!task) throw new Error(`selected task ${selection.taskId} was not found`);
     const outcome = await driveTask(task);
     if (outcome === "PAUSED") break;
