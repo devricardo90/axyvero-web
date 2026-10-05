@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { JiraTaskSystemAdapter } from "/projects/souza-lab/src/adapters/jira-task-adapter.js";
+import { JiraTaskSystemAdapter, mapIssueToTask } from "/projects/souza-lab/src/adapters/jira-task-adapter.js";
 import { JiraSyncClient } from "/projects/souza-lab/src/adapters/jira-sync-client.js";
 import { SqliteExecutionAttemptStore } from "/projects/souza-lab/src/adapters/sqlite-execution-attempt-store.js";
 import { SqliteGateFactStore } from "/projects/souza-lab/src/adapters/sqlite-gate-fact-store.js";
@@ -16,6 +16,7 @@ import { WorkspaceCommandValidator } from "/projects/souza-lab/src/adapters/work
 import { AxyHermesAgentExecutor } from "./axy-hermes-agent.mjs";
 import { HermesIndependentReviewer } from "./hermes-reviewer.mjs";
 import { HermesBridge } from "./hermes-util.mjs";
+import { healSpecification, parseRepairOutput, SpecNeedsOwnerError, SpecRepairExhaustedError } from "./spec-healing.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const config = JSON.parse(readFileSync(join(here, "config.json"), "utf8"));
@@ -148,7 +149,45 @@ const lifecycle = composeGitHubLifecycle({
 });
 const hermesBridge = new HermesBridge(config.hermes);
 
+function readJiraTask(issueKey) {
+  const issue = jiraWrite.request(`issue/${encodeURIComponent(issueKey)}?fields=summary,description,status,issuelinks`);
+  const mapped = mapIssueToTask(issue, { projectKey: config.projectKey, site: config.jira.site, statusMapping: {
+    [config.jira.todoStatus]: "OPEN", [config.jira.doingStatus]: "OPEN", [config.jira.doneStatus]: "DONE",
+  }, relationship: null });
+  return { task: mapped.task, description: typeof issue.fields?.description === "string" ? issue.fields.description : "" };
+}
+
+async function pauseForOwner(task, error) {
+  const question = error.question ?? error.message;
+  const body = [
+    `Owner decision required for AXYVERO project ${config.projectKey}.`, `Jira issue: ${task.id}`,
+    "Stage: SPEC_REPAIR", `Question: ${question}`, `Kanban task: ${task.id}`,
+    "Add the decision as a comment on this card, then unblock it with the normal Hermes Kanban flow.",
+    `Evidence: ${JSON.stringify(error.evidence ?? {})}`,
+  ].join("\n");
+  const id = await hermesBridge.createTask({ title: `OWNER DECISION - ${task.id} - specification`, body, assignee: config.hermes.coderAssignee, workspacePath: config.repository.repoPath, idempotencyKey: `owner-decision-spec-${task.id}` });
+  await hermesBridge.comment(id, body);
+  await hermesBridge.block(id, `${body}`, "needs_input");
+  log({ event: "owner_paused", taskId: task.id, decisionTaskId: id, stage: "SPEC_REPAIR" });
+}
+
 async function driveTask(task) {
+  try {
+    const healed = await healSpecification({
+      task,
+      readIssue: readJiraTask,
+      writeIssue: async (issueKey, description) => jiraWrite.request(`issue/${encodeURIComponent(issueKey)}`, { method: "PUT", body: { fields: { description } } }),
+      reviewer,
+      repairer: async (input) => parseRepairOutput(await reviewer.repairSpec(input)),
+      ownerPause: pauseForOwner,
+      maxSpecRepairs: config.timings.maxSpecRepairs,
+      constraints: `Repository: ${config.repository.identity}; base branch: ${config.repository.baseRef}; workflow: ${config.github.workflowIdentity}`,
+    });
+    task = healed.task;
+  } catch (error) {
+    if (error instanceof SpecNeedsOwnerError || error instanceof SpecRepairExhaustedError) { await pauseForOwner(task, error); return "PAUSED"; }
+    throw error;
+  }
   const workPackage = makeWorkPackage(task);
   safeTransition(jiraWrite, task.id, config.jira.doingStatus, config.jira.doingTransition);
   log({ event: "task_started", taskId: task.id, executionId: workPackage.executionId });
@@ -198,7 +237,8 @@ try {
     }
     const task = tasks.find((candidate) => candidate.id === selection.taskId);
     if (!task) throw new Error(`selected task ${selection.taskId} was not found`);
-    await driveTask(task);
+    const outcome = await driveTask(task);
+    if (outcome === "PAUSED") break;
   }
 } catch (error) {
   exitCode = 1;

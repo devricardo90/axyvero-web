@@ -73,6 +73,14 @@ export class HermesBridge {
     }
   }
 
+  async comment(taskId, text) {
+    await this.invoke(["kanban", "--board", this.board, "comment", taskId, text], "comment");
+  }
+
+  async block(taskId, reason, kind = "needs_input") {
+    await this.invoke(["kanban", "--board", this.board, "block", taskId, reason, "--kind", kind], "block");
+  }
+
   async show(taskId) {
     const result = await this.invoke(["kanban", "--board", this.board, "show", taskId, "--json"], "show");
     return parseJson(result.stdout ?? result, "show");

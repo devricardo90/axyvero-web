@@ -68,6 +68,24 @@ export class HermesIndependentReviewer {
     }
   }
 
+  async repairSpec({ task, findings, constraints = "", previousAttempts = [] }) {
+    const criteria = task.acceptanceCriteria.map(({ id, description, text }) => `- ${id}: ${description ?? text}`).join("\n");
+    const findingText = findings.map((finding) => `- ${finding.id}: ${finding.summary}`).join("\n");
+    const body = [
+      `Repair the Jira specification for ${task.id}.`, `Title: ${task.title}`, "",
+      "Current complete Acceptance Criteria:", criteria, "", "Exact reviewer findings:", findingText,
+      "", "Repository/project constraints:", constraints || "Use the existing repository conventions and package manager.",
+      `Previous repair attempts: ${JSON.stringify(previousAttempts)}`,
+      "", "Preserve task identity, product intent, scope, dependencies, and AC IDs where possible.",
+      "Resolve ordinary engineering ambiguity autonomously. Ask the Owner only for scope, architecture, security, legal, cost, destructive-action, credential, or materially different product decisions.",
+      "Return exactly REPAIRED followed by complete lines '- AC-ID: testable criterion', or NEEDS_OWNER followed by one exact question.",
+    ].join("\n");
+    const id = await this.bridge.createTask({ title: `SPEC REPAIR - ${task.id}`, body, assignee: this.reviewerAssignee, workspacePath: this.repoPath, idempotencyKey: `loop-spec-repair-${task.id}-${previousAttempts.length}` });
+    const payload = await this.bridge.poll(id);
+    const run = Array.isArray(payload?.runs) ? [...payload.runs].sort((a, b) => Number(a?.id ?? 0) - Number(b?.id ?? 0)).at(-1) : null;
+    return run?.summary ?? payload?.latest_summary ?? payload?.task?.result ?? "";
+  }
+
   async reviewImplementation({ workPackage, head, base, workspacePath, authorId, changedFiles }) {
     const criteria = workPackage.acceptanceCriteria.map(({ id, text }) => `- ${id}: ${text}`).join("\n");
     const body = [

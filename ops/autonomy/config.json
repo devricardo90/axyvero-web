@@ -32,6 +32,7 @@
   "stateDir": "/opt/data/axyvero",
   "timings": {
     "cycleWaitMs": 5000,
-    "maxRuntimeCyclesPerTask": 500
+    "maxRuntimeCyclesPerTask": 500,
+    "maxSpecRepairs": 5
   }
 }
