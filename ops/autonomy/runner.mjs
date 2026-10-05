@@ -29,6 +29,15 @@ mkdirSync(join(stateDir, "leases"), { recursive: true });
 
 const log = (entry) => process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function retryTransient(fn, { attempts = 4, baseMs = 1000 } = {}) {
+  for (let n = 0; ; n += 1) {
+    try { return await fn(); } catch (error) {
+      if (!error?.retryable || n >= attempts - 1) throw error;
+      await sleep(baseMs * (2 ** n));
+      log({ event: "retry", attempt: n + 1, code: error.code ?? error.name ?? "ERROR" });
+    }
+  }
+}
 
 function git(args, cwd, options = {}) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"], input: options.input }).trim();
@@ -161,13 +170,14 @@ async function pauseForOwner(task, error) {
   const question = error.question ?? error.message;
   const body = [
     `Owner decision required for AXYVERO project ${config.projectKey}.`, `Jira issue: ${task.id}`,
-    "Stage: SPEC_REPAIR", `Question: ${question}`, `Kanban task: ${task.id}`,
+    "Stage: SPEC_REPAIR", `Question: ${question}`, `Kanban task: ${process.env.HERMES_KANBAN_TASK ?? "owner-decision-card-created-below"}`,
     "Add the decision as a comment on this card, then unblock it with the normal Hermes Kanban flow.",
     `Evidence: ${JSON.stringify(error.evidence ?? {})}`,
   ].join("\n");
   const id = await hermesBridge.createTask({ title: `OWNER DECISION - ${task.id} - specification`, body, assignee: config.hermes.coderAssignee, workspacePath: config.repository.repoPath, idempotencyKey: `owner-decision-spec-${task.id}` });
   await hermesBridge.comment(id, body);
-  await hermesBridge.block(id, `${body}`, "needs_input");
+  await hermesBridge.block(id, `${body}\nKanban task: ${id}`, "needs_input");
+  writeFileSync(join(stateDir, "owner-paused.json"), JSON.stringify({ taskId: task.id, decisionTaskId: id, stage: "SPEC_REPAIR", evidence: error.evidence ?? {}, updatedAt: new Date().toISOString() }, null, 2));
   log({ event: "owner_paused", taskId: task.id, decisionTaskId: id, stage: "SPEC_REPAIR" });
 }
 
@@ -182,10 +192,18 @@ async function driveTask(task) {
       ownerPause: pauseForOwner,
       maxSpecRepairs: config.timings.maxSpecRepairs,
       constraints: `Repository: ${config.repository.identity}; base branch: ${config.repository.baseRef}; workflow: ${config.github.workflowIdentity}`,
+      checkpoint: async (kind, evidence) => {
+        const path = join(stateDir, "executions", `${task.id}-spec.json`);
+        if (kind === "load") return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+        writeFileSync(path, JSON.stringify({ taskId: task.id, stage: kind === "repaired" ? "SPEC_REVIEW" : "SPEC_REPAIR", attempts: evidence?.attempts ?? [], evidence, updatedAt: new Date().toISOString() }, null, 2));
+        return evidence;
+      },
+      retry: retryTransient,
     });
     task = healed.task;
   } catch (error) {
     if (error instanceof SpecNeedsOwnerError || error instanceof SpecRepairExhaustedError) { await pauseForOwner(task, error); return "PAUSED"; }
+    if (error?.retryable) { log({ event: "retryable_task_failure", taskId: task.id, code: error.code ?? error.name }); return "RETRY"; }
     throw error;
   }
   const workPackage = makeWorkPackage(task);
@@ -239,6 +257,7 @@ try {
     if (!task) throw new Error(`selected task ${selection.taskId} was not found`);
     const outcome = await driveTask(task);
     if (outcome === "PAUSED") break;
+    if (outcome === "RETRY") { await sleep(config.timings.cycleWaitMs); continue; }
   }
 } catch (error) {
   exitCode = 1;

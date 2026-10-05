@@ -37,33 +37,38 @@ export function replaceAcceptanceCriteria(description, criteria) {
   return [...lines.slice(0, heading), ...block, ...lines.slice(end)].join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
-export async function healSpecification({ task, readIssue, writeIssue, reviewer, repairer, ownerPause, maxSpecRepairs = 5, constraints = "" }) {
+export async function healSpecification({ task, readIssue, writeIssue, reviewer, repairer, ownerPause, maxSpecRepairs = 5, constraints = "", checkpoint = async () => {}, retry = async (fn) => fn() }) {
   let current = await readIssue(task.id);
-  const attempts = [];
+  const attempts = (await checkpoint("load"))?.attempts ?? [];
   for (let attempt = 0; attempt <= maxSpecRepairs; attempt += 1) {
     const currentTask = current.task ?? current;
     const oldDigest = currentTask.acceptanceCriteriaDigest ?? criteriaDigest(currentTask.acceptanceCriteria);
     const workPackage = { taskId: currentTask.id, title: currentTask.title, executionId: `spec-${currentTask.id}`, acceptanceCriteria: currentTask.acceptanceCriteria.map(({ id, description }) => ({ id, text: description })) };
-    const review = await reviewer.reviewSpec(workPackage);
-    if (review.verdict === "UNAVAILABLE") throw Object.assign(new Error("spec reviewer unavailable"), { code: "REVIEW_UNAVAILABLE", classification: "TRANSIENT", retryable: true });
+    const review = await retry(async () => {
+      const result = await reviewer.reviewSpec(workPackage);
+      if (result.verdict === "UNAVAILABLE") throw Object.assign(new Error("spec reviewer unavailable"), { code: "REVIEW_UNAVAILABLE", classification: "TRANSIENT", retryable: true });
+      return result;
+    });
     if (review.verdict === "CLEAN") return { task: currentTask, attempts };
-    const evidence = { taskId: task.id, attempt, oldDigest, findings: review.findings, criteria: currentTask.acceptanceCriteria };
+    const evidence = { taskId: task.id, attempt, oldDigest, findings: review.findings, criteria: currentTask.acceptanceCriteria, attempts: [...attempts] };
+    await checkpoint("review", evidence);
     if (attempt >= maxSpecRepairs) throw new SpecRepairExhaustedError(`spec repair limit exhausted for ${task.id}`, evidence);
-    const repaired = await repairer({ task: currentTask, findings: review.findings, constraints, previousAttempts: attempts });
+    const repaired = await retry(() => repairer({ task: currentTask, findings: review.findings, constraints, previousAttempts: attempts }));
     if (repaired.kind === "NEEDS_OWNER") throw new SpecNeedsOwnerError(repaired.question, evidence);
     const newDigest = criteriaDigest(repaired.criteria);
     if (newDigest === oldDigest) throw new SpecRepairExhaustedError(`spec repair returned unchanged Acceptance Criteria for ${task.id}`, { ...evidence, proposedDigest: newDigest });
-    const fresh = await readIssue(task.id);
+    const fresh = await retry(() => readIssue(task.id));
     const freshTask = fresh.task ?? fresh;
     const freshDigest = freshTask.acceptanceCriteriaDigest ?? criteriaDigest(freshTask.acceptanceCriteria);
     if (freshDigest !== oldDigest) { current = fresh; continue; }
     const description = fresh.description ?? fresh.fields?.description ?? "";
-    await writeIssue(task.id, replaceAcceptanceCriteria(description, repaired.criteria));
-    const verified = await readIssue(task.id);
+    await retry(() => writeIssue(task.id, replaceAcceptanceCriteria(description, repaired.criteria)));
+    const verified = await retry(() => readIssue(task.id));
     const verifiedTask = verified.task ?? verified;
     const verifiedDigest = verifiedTask.acceptanceCriteriaDigest ?? criteriaDigest(verifiedTask.acceptanceCriteria);
     if (verifiedDigest !== newDigest) throw new Error(`Jira post-write Acceptance Criteria verification failed for ${task.id}`);
     attempts.push({ attempt: attempt + 1, oldDigest, newDigest, findings: review.findings });
+    await checkpoint("repaired", { taskId: task.id, oldDigest, newDigest, findings: review.findings, attempt: attempt + 1, attempts: [...attempts] });
     current = verified;
   }
   throw new SpecRepairExhaustedError(`spec repair limit exhausted for ${task.id}`, { taskId: task.id, attempts });

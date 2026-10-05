@@ -44,3 +44,14 @@ test("replacement preserves surrounding description", () => {
   const result = replaceAcceptanceCriteria("Intro\n\nAcceptance Criteria\n- AC-01: old\n\nNotes", [{ id: "AC-01", description: "new" }]);
   assert.match(result, /Intro/); assert.match(result, /- AC-01: new/); assert.match(result, /Notes/);
 });
+
+test("checkpoint evidence survives and transient reviewer failure retries", async () => {
+  const h = harness([{ verdict: "UNAVAILABLE", findings: [] }, { verdict: "FINDINGS", findings: [{ id: "R-1", summary: "clarify" }] }, { verdict: "CLEAN", findings: [] }], ["REPAIRED\n- AC-01: Run npm test and report the output."]);
+  const checkpoints = [];
+  let loaded = null;
+  let failures = 0;
+  const out = await healSpecification({ task, ...h, checkpoint: async (kind, evidence) => { if (kind === "load") return loaded; loaded = { attempts: evidence?.attempts ?? [] }; checkpoints.push({ kind, evidence }); }, retry: async (fn) => { try { return await fn(); } catch (error) { if (++failures === 1) return await fn(); throw error; } } });
+  assert.equal(out.attempts.length, 1);
+  assert.ok(checkpoints.some((item) => item.kind === "review"));
+  assert.equal(failures, 1);
+});
