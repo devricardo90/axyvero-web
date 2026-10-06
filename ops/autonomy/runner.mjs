@@ -52,7 +52,7 @@ function syncLocalMain() {
   git(["merge", "--ff-only", `origin/${config.repository.baseRef}`], repo);
 }
 
-function makeWorkPackage(task) {
+function makeWorkPackage(task, specReview = null) {
   const digest = task.acceptanceCriteriaDigest;
   const short = digest.slice(0, 12);
   return Object.freeze({
@@ -64,6 +64,7 @@ function makeWorkPackage(task) {
     dependencies: Object.freeze(task.dependencies.map(({ taskId }) => taskId)),
     planBinding: Object.freeze({ documentId: `jira:${config.projectKey}`, planVersion: 1, contentHash: digest, taskHash: digest }),
     repository: Object.freeze({ identity: config.repository.identity, baseRef: config.repository.baseRef }),
+    specReview: specReview ? Object.freeze({ verdict: specReview.verdict, reviewerId: specReview.reviewerId ?? "hermes-reviewer" }) : null,
   });
 }
 
@@ -226,7 +227,7 @@ async function driveTask(task) {
     if (error?.retryable) { log({ event: "retryable_task_failure", taskId: task.id, code: error.code ?? error.name }); return "RETRY"; }
     throw error;
   }
-  const workPackage = makeWorkPackage(task);
+  const workPackage = makeWorkPackage(task, healed.specReview);
   safeTransition(jiraWrite, task.id, config.jira.doingStatus, config.jira.doingTransition);
   log({ event: "task_started", taskId: task.id, executionId: workPackage.executionId });
 

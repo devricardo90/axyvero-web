@@ -49,7 +49,7 @@ export async function healSpecification({ task, readIssue, writeIssue, reviewer,
       if (result.verdict === "UNAVAILABLE") throw Object.assign(new Error("spec reviewer unavailable"), { code: "REVIEW_UNAVAILABLE", classification: "TRANSIENT", retryable: true });
       return result;
     });
-    if (review.verdict === "CLEAN") return { task: currentTask, attempts };
+    if (review.verdict === "CLEAN") return { task: currentTask, attempts, specReview: review };
     const evidence = { taskId: task.id, attempt, oldDigest, findings: review.findings, criteria: currentTask.acceptanceCriteria, attempts: [...attempts] };
     await checkpoint("review", evidence);
     if (attempt >= maxSpecRepairs) throw new SpecRepairExhaustedError(`spec repair limit exhausted for ${task.id}`, evidence);
