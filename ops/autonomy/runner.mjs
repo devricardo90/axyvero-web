@@ -57,7 +57,7 @@ function makeWorkPackage(task, specReview = null) {
   const short = digest.slice(0, 12);
   return Object.freeze({
     workPackageId: `wp-${task.id}-${short}`,
-    executionId: `${task.id.toLowerCase()}-${short}`,
+    executionId: `${task.id.toLowerCase()}-${digest}`,
     taskId: task.id,
     title: task.title,
     acceptanceCriteria: Object.freeze(task.acceptanceCriteria.map(({ id, description }) => Object.freeze({ id, text: description }))),
