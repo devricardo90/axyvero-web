@@ -203,8 +203,9 @@ async function resumePausedOwner() {
 }
 
 async function driveTask(task) {
+  let healed;
   try {
-    const healed = await healSpecification({
+    healed = await healSpecification({
       task,
       readIssue: readJiraTask,
       writeIssue: async (issueKey, description) => jiraWrite.request(`issue/${encodeURIComponent(issueKey)}`, { method: "PUT", body: { fields: { description } } }),
